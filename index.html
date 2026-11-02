@@ -182,7 +182,7 @@ input.flash,select.flash{animation:flash 1.2s ease-out}
 <div class="toast" id="toast" role="status"></div>
 <script>
 "use strict";
-const APP_VERSION='3.0.0';
+const APP_VERSION='3.0.1';
 /* ================= utilidades ================= */
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -424,6 +424,9 @@ function pantallaAcceso(tipo,msg=''){$('#hdr').hidden=true;const c=NUBE.cfg||{},
     pedirClave:`<p class="sm" style="margin:10px 0 0">Es la primera vez que entras desde este ordenador o navegador. Escribe la <b>clave de cifrado</b> de la clínica (la que apuntaste en papel). Solo se pide una vez por equipo.</p>
       <form data-form="fbPedirClave"><label>Clave de cifrado<input name="p" type="password" required autocomplete="off"></label>${err}<button class="primary">Desbloquear</button></form>
       <div class="bar sm" style="margin:12px 0 0"><span class="grow"></span><button class="link sm" data-act="salir">Salir</button></div>`,
+    reglas:`<p style="margin:10px 0 0"><b>Falta publicar las reglas de seguridad de Firestore.</b></p><p class="sm" style="margin:6px 0 0">Has entrado bien, pero la base de datos todavía no deja pasar a nadie. En la consola de Firebase ve a <b>Firestore Database → Reglas</b>, borra lo que haya, pega esto y pulsa <b>Publicar</b>. Ya lleva tu identificador de usuario: solo tú podrás leer o escribir.</p>
+      <textarea id="reglasTxt" rows="9" readonly style="font-family:ui-monospace,Consolas,monospace;font-size:12px;margin-top:10px">${esc(REGLAS(a.uid||''))}</textarea>
+      <div class="bar" style="margin:10px 0 0"><button data-act="copiarReglas">Copiar reglas</button><span class="grow"></span><button class="primary" data-act="fbReintentar">Ya las he publicado</button></div>${err}`,
     cargando:`<p class="sm" style="margin:12px 0 0" id="cargaTxt">${esc(msg||'Cargando…')}</p>`};
   $('#app').innerHTML=`<div class="login"><div class="card">${cab}${B[tipo]}</div><p class="mut sm" style="text-align:center">Versión ${APP_VERSION}</p></div>`;
   const f=$('#app input'+(tipo==='login'&&(a.email||NUBE.lastEmail||ls.get('cl_email'))?'[name=pw]':''));if(f)f.focus()}
@@ -1092,6 +1095,7 @@ const ACT={
   nubeSync:async()=>{const n=await sincronizar();toast(NUBE.error?'Error: '+NUBE.error:n?n+' cambios recibidos':'Todo al día')},
   copiarReglas:async()=>{const t=$('#reglasTxt');try{await navigator.clipboard.writeText(t.value);toast('Reglas copiadas')}catch(e){t.select();document.execCommand('copy');toast('Reglas copiadas')}},
   fbOlvido:async()=>{const em=($('[name=email]')||{}).value;if(!em){toast('Escribe tu correo primero');return}try{await authPost('sendOobCode',{requestType:'PASSWORD_RESET',email:em.trim()});toast('Te hemos enviado un correo para cambiar la contraseña')}catch(e){toast(e.message)}},
+  fbReintentar:async()=>{try{await trasLogin()}catch(e){pantallaAcceso('reglas',e.code==='permiso'?'Todavía no deja entrar. Comprueba que has pulsado «Publicar» (a veces tarda un minuto en aplicarse).':e.message)}},
   fbCambiarProyecto:()=>{ls.del('cl_fb');NUBE.cfg=null;pantallaAcceso('conectar')},
   nubeDesconectar:async()=>{const p=(await getAll('outbox')).length;if(!(await confirmar(`Se borrarán de este ordenador los datos descargados y la clave de cifrado guardada. Los datos siguen en la nube.${p?`<br><br><b style="color:var(--danger)">Hay ${p} cambios sin subir que se perderán.</b>`:''}<br><br>¿Desconectar?`,'Desconectar','danger')))return;
     await limpiarLocal();await delRaw('sys','ck:'+owner());await delRaw('sys','owner');ls.del(syncKey());ls.del('cl_fb');ss.del('cl_auth');location.reload()},
@@ -1102,7 +1106,7 @@ const FORM={
   fbConectar:async f=>{const o=formObj(f);NUBE.cfg={pid:o.pid.trim(),key:o.key.trim()};ls.set('cl_fb',NUBE.cfg);pantallaAcceso('login')},
   fbLogin:async f=>{const o=formObj(f);NUBE.lastEmail=o.email.trim();try{const prevUid=NUBE.auth&&NUBE.auth.uid;await entrarFirebase(o.email.trim(),o.pw);ls.set('cl_email',o.email.trim());
       if(SES.locked&&prevUid===NUBE.auth.uid&&NUBE.ck){SES.locked=false;asegurarUsuario();SES.last=Date.now();render();sincronizar();return}
-      SES.locked=false;await trasLogin()}catch(e){pantallaAcceso('login',e.message)}},
+      SES.locked=false;await trasLogin()}catch(e){if(e.code==='permiso'&&NUBE.auth)pantallaAcceso('reglas');else pantallaAcceso('login',e.message)}},
   fbCrearClave:async f=>{const o=formObj(f);if(o.p1!==o.p2){pantallaAcceso('crearClave','Las dos claves no coinciden.');return}
     const t=$('#app button.primary');if(t)t.textContent='Creando…';
     try{const salt=b64(crypto.getRandomValues(new Uint8Array(16))),iter=600000;const key=await derivar(o.p1,salt,iter);const check=await cifrar(CHECK,'meta/cifrado',key);
@@ -1239,7 +1243,7 @@ window.addEventListener('beforeunload',e=>{if(SES.user&&(Object.values(S.drafts)
 
 (async()=>{try{db=await openDB();if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();D.config=mergeCfg(await getOne('config','config'));
   NUBE.cfg=ls.get('cl_fb');if(!NUBE.cfg){pantallaAcceso('conectar');return}
-  const a=ss.get('cl_auth');if(a&&a.rt){NUBE.auth=a;try{await token(true);await trasLogin();return}catch(e){NUBE.auth=null;ss.del('cl_auth')}}
+  const a=ss.get('cl_auth');if(a&&a.rt){NUBE.auth=a;try{await token(true);await trasLogin();return}catch(e){if(e.code==='permiso'){pantallaAcceso('reglas');return}NUBE.auth=null;ss.del('cl_auth')}}
   pantallaAcceso('login')}catch(err){console.error(err);$('#app').innerHTML=`<div class="card">No se pudo arrancar el programa: ${esc(err.message)}. Prueba con Chrome o Edge actualizados.</div>`}})();
 </script>
 </body>
