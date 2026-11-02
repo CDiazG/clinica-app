@@ -182,7 +182,7 @@ input.flash,select.flash{animation:flash 1.2s ease-out}
 <div class="toast" id="toast" role="status"></div>
 <script>
 "use strict";
-const APP_VERSION='3.0.1';
+const APP_VERSION='3.0.2';
 /* ================= utilidades ================= */
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -275,7 +275,7 @@ const getAll=s=>req(s,'readonly',o=>o.getAll());
 const getOne=(s,id)=>req(s,'readonly',o=>o.get(id));
 const putRaw=(s,o)=>req(s,'readwrite',x=>{x.put(o)});
 const delRaw=(s,id)=>req(s,'readwrite',x=>{x.delete(id)});
-async function cargarTodo(){const r=await Promise.all(DATA.map(getAll));DATA.forEach((s,i)=>D[s]=r[i]);D.config=mergeCfg(await getOne('config','config'));D.config.ia.key=iaKeyLocal()}
+async function cargarTodo(){const r=await Promise.all(DATA.map(getAll));DATA.forEach((s,i)=>D[s]=r[i]);D.config=mergeCfg(await getOne('config','config'));D.config.ia.key=D.config.ia.key||iaKeyLocal()}
 function memPut(s,o){if(s==='config'){D.config=o;return}const a=D[s],i=a.findIndex(x=>x.id===o.id);if(i>=0)a[i]=o;else a.push(o)}
 function memDel(s,id){if(D[s])D[s]=D[s].filter(x=>x.id!==id)}
 async function guardar(s,o){if(s==='config'){if(o.ia&&o.ia.key!=null)iaKeyLocal(o.ia.key)}await putRaw(s,o);memPut(s,o);await encolar(s,o.id);return o}
@@ -332,7 +332,7 @@ const CHECK='clinica-oftalmologica-ok';
 /* cola de envío */
 async function encolar(col,id,del=false){if(col==='config')id='config';await putRaw('outbox',{k:col+'/'+id,col,id,del,t:Date.now()});programarEnvio()}
 let _envT;function programarEnvio(){clearTimeout(_envT);_envT=setTimeout(()=>enviar(),700);NUBE.pend++;pintarNube()}
-function cfgParaNube(){const c=clone(D.config);c.ia={...c.ia,key:''};c.usuarios=(c.usuarios||[]).map(u=>({id:u.id,nombre:u.nombre}));return c}
+function cfgParaNube(){const c=clone(D.config);c.ia={...c.ia,key:c.ia.key||iaKeyLocal()};c.usuarios=(c.usuarios||[]).map(u=>({id:u.id,nombre:u.nombre}));return c}
 let _enviando=false;
 async function enviar(){if(!NUBE.ck||!NUBE.auth||_enviando)return;_enviando=true;pintarNube('sube');
   try{let items=await getAll('outbox');
@@ -366,7 +366,7 @@ async function bajar(progreso){if(!NUBE.ck||!NUBE.auth||_bajando)return 0;_bajan
           const k=col+'/'+(col==='config'?'config':id);if(pend.has(k))continue;
           if(f.del&&f.del.booleanValue){if(col!=='config'&&D[col].some(x=>x.id===id)){await delRaw(col,id);memDel(col,id);cambios++}continue}
           if(!f.d)continue;let obj;try{obj=JSON.parse(TD.decode(await descifrar(f.d.stringValue,col+'/'+(col==='config'?'config':id))))}catch(e){console.warn('No se pudo descifrar',k);continue}
-          if(col==='config'){obj=mergeCfg(obj);obj.ia.key=iaKeyLocal();obj.id='config'}
+          if(col==='config'){obj=mergeCfg(obj);if(obj.ia.key)iaKeyLocal(obj.ia.key);else obj.ia.key=iaKeyLocal();obj.id='config'}
           await putRaw(col,obj);memPut(col,obj);cambios++}
         if(progreso)progreso(col,cambios);
         if(docs.length<300)break}
@@ -385,7 +385,7 @@ function pintarNube(fase){const el=$('#nubeEst');if(!el)return;const p=NUBE.pend
 
 /* restaurar una copia: sustituye todo, también en la nube */
 async function restaurarNube(data){
-  const cfg=mergeCfg({...data.config});cfg.usuarios=D.config.usuarios;cfg.ia={...cfg.ia,key:iaKeyLocal()};cfg.id='config';
+  const cfg=mergeCfg({...data.config});cfg.usuarios=D.config.usuarios;cfg.ia={...cfg.ia,key:D.config.ia.key||iaKeyLocal()};cfg.id='config';
   const blobs=[];for(const b of data.blobs||[]){blobs.push({id:b.id,blob:await (await fetch(b.data)).blob()})}
   const now=Date.now();
   await new Promise((res,rej)=>{const t=db.transaction([...STORES,'outbox'],'readwrite');const ob=t.objectStore('outbox');
@@ -822,7 +822,7 @@ function cIA(){const c=D.config.ia;return `<form class="card" data-form="guardar
   <label class="row"><input type="checkbox" name="informes" ${c.informes?'checked':''}> Informes (redactar en estilo formal)</label></div></div>
   <div class="bar" style="margin:14px 0 0"><button class="primary">Guardar</button><button type="button" data-act="iaProbar">Probar conexión</button>${c.key?'<button type="button" class="danger" data-act="iaBorrarClave">Borrar clave</button>':''}<span id="iaEstado" class="sm"></span></div></form>
   <div class="card" style="max-width:820px"><h3>Cómo conseguir la clave</h3><ol class="sm" style="margin:0;padding-left:20px;line-height:1.7"><li>Entra en <b>console.anthropic.com</b> y crea una cuenta (es distinta de la suscripción de Claude).</li><li>En <b>Billing</b> añade una tarjeta y un saldo pequeño (con 5 $ hay para muchos meses).</li><li>En <b>API Keys</b> pulsa “Create Key”, cópiala y pégala arriba.</li></ol>
-  <p class="sm mut">Qué se envía: solo el texto dictado y, en gafas, los valores de las casillas. Nunca el nombre, DNI ni otros datos del paciente. La clave se guarda solo en este ordenador y no se incluye en las copias de seguridad.</p></div>`}
+  <p class="sm mut">Qué se envía: solo el texto dictado y, en gafas, los valores de las casillas. Nunca el nombre, DNI ni otros datos del paciente. La clave se guarda cifrada en tu nube y la usan todos tus ordenadores; basta con pegarla una vez. No se incluye en las copias de seguridad descargadas.</p></div>`}
 function cGeneral(){const c=D.config;return `<form class="card" data-form="guardarGeneral" style="max-width:820px"><div class="grid">
   <label class="span2">Nombre del programa / clínica<input name="nombreApp" value="${esc(c.nombreApp)}"></label><label>Bloquear tras (minutos sin uso)<input name="minutosBloqueo" type="number" min="1" value="${c.minutosBloqueo}"></label><label>Visitas en “Imprimir últimos”<input name="ultimasN" type="number" min="1" value="${c.ultimasN}"></label>
   <label class="full">Texto de exención de IVA (se imprime en facturas con IVA 0)<textarea name="textoExento" rows="2">${esc(c.textoExento)}</textarea></label></div>
